@@ -1,0 +1,612 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<title>Head-Coupled 3D Grid (Web)</title>
+<style>
+  html, body {
+    margin: 0; padding: 0; overflow: hidden;
+    background: #04040a; color: #eaeaea;
+    font-family: "Segoe UI", "Hiragino Sans", sans-serif;
+  }
+  #canvas-holder { position: fixed; inset: 0; }
+  canvas { display: block; }
+
+  #hud {
+    position: fixed; top: 12px; left: 12px;
+    font-size: 13px; line-height: 1.6;
+    background: rgba(0,0,0,0.45);
+    padding: 10px 14px; border-radius: 8px;
+    pointer-events: none;
+    max-width: 320px;
+  }
+  #hud b { color: #7fd8ff; }
+
+  #debug-video {
+    position: fixed; bottom: 12px; right: 12px;
+    width: 220px; border: 2px solid #444; border-radius: 6px;
+    transform: scaleX(-1);
+    display: none;
+    z-index: 5;
+  }
+
+  #status {
+    position: fixed; top: 12px; right: 12px;
+    font-size: 13px; padding: 6px 12px;
+    border-radius: 6px; background: rgba(0,0,0,0.5);
+  }
+  .ok { color: #6dff8f; }
+  .warn { color: #ffcf5c; }
+  .err { color: #ff6d6d; }
+
+  #start-overlay {
+    position: fixed; inset: 0;
+    display: flex; align-items: center; justify-content: center;
+    background: #04040a; z-index: 10; text-align: center;
+  }
+  #start-overlay button {
+    font-size: 18px; padding: 14px 28px; border-radius: 8px;
+    border: none; background: #2a8fd8; color: white; cursor: pointer;
+  }
+  #start-overlay button:hover { background: #3aa0ea; }
+
+  #settings-toggle {
+    position: fixed; top: 12px; right: 130px;
+    width: 34px; height: 34px; border-radius: 50%;
+    background: rgba(0,0,0,0.5); border: 1px solid #555;
+    color: #eaeaea; font-size: 16px; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    z-index: 6;
+  }
+  #settings-toggle:hover { background: rgba(0,0,0,0.75); }
+
+  #settings-panel {
+    position: fixed; top: 56px; right: 12px;
+    width: 300px; max-height: 80vh; overflow-y: auto;
+    background: rgba(10,10,18,0.92); border: 1px solid #444;
+    border-radius: 10px; padding: 14px 16px;
+    font-size: 13px; z-index: 6; display: none;
+  }
+  #settings-panel h3 {
+    margin: 0 0 10px 0; font-size: 14px; color: #7fd8ff;
+  }
+  #settings-panel .row {
+    display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px;
+  }
+  #settings-panel .row label {
+    display: flex; justify-content: space-between; color: #cfcfcf;
+  }
+  #settings-panel .row label span.val { color: #7fd8ff; font-variant-numeric: tabular-nums; }
+  #settings-panel input[type="range"] { width: 100%; }
+  #settings-panel .checkbox-row {
+    display: flex; align-items: center; gap: 8px; margin-bottom: 10px;
+  }
+  #settings-panel button.reset-btn {
+    width: 100%; padding: 8px; margin-top: 4px;
+    background: #333; color: #eaeaea; border: 1px solid #555;
+    border-radius: 6px; cursor: pointer; font-size: 13px;
+  }
+  #settings-panel button.reset-btn:hover { background: #444; }
+  #settings-panel hr { border: none; border-top: 1px solid #333; margin: 10px 0; }
+</style>
+</head>
+<body>
+
+<div id="start-overlay">
+  <div>
+    <p>カメラへのアクセスを許可して開始してください</p>
+    <button id="start-btn">開始 / Start</button>
+  </div>
+</div>
+
+<div id="canvas-holder"></div>
+<video id="debug-video" autoplay playsinline muted></video>
+
+<div id="hud">
+  <b>Head-Coupled 3D Grid (Web)</b><br>
+  C: 正面キャリブレーション<br>
+  D: デバッグ映像 表示切替<br>
+  F: フルスクリーン切替<br>
+  S: 設定パネル 表示切替<br>
+</div>
+<div id="status">初期化中...</div>
+
+<button id="settings-toggle" title="設定">⚙</button>
+<div id="settings-panel">
+  <h3>画面サイズ</h3>
+  <div class="row">
+    <label>横幅(cm) <span class="val" id="val-screenW">25.4</span></label>
+    <input type="range" id="screenW" min="10" max="80" step="0.1" value="25.4">
+  </div>
+  <div class="row">
+    <label>縦幅(cm) <span class="val" id="val-screenH">17.0</span></label>
+    <input type="range" id="screenH" min="6" max="60" step="0.1" value="17.0">
+  </div>
+
+  <hr>
+  <h3>カメラ・トラッキング</h3>
+  <div class="row">
+    <label>カメラ水平視野角(°) <span class="val" id="val-hfov">60</span></label>
+    <input type="range" id="hfov" min="30" max="120" step="1" value="60">
+  </div>
+  <div class="checkbox-row">
+    <input type="checkbox" id="depthTracking">
+    <label for="depthTracking">顔の大きさから奥行きを推定する</label>
+  </div>
+  <div class="row">
+    <label>固定距離(m) <span class="val" id="val-fixedDist">0.50</span></label>
+    <input type="range" id="fixedDist" min="0.2" max="2.0" step="0.01" value="0.5">
+  </div>
+  <div class="row">
+    <label>平均顔幅(cm) <span class="val" id="val-faceWidth">14.0</span></label>
+    <input type="range" id="faceWidth" min="8" max="22" step="0.5" value="14.0">
+  </div>
+  <div class="row">
+    <label>位置スムージング <span class="val" id="val-smoothing">0.25</span></label>
+    <input type="range" id="smoothing" min="0.02" max="1.0" step="0.01" value="0.25">
+  </div>
+
+  <hr>
+  <h3>奥の部屋の見た目</h3>
+  <div class="row">
+    <label>奥行き(m) <span class="val" id="val-roomDepth">1.00</span></label>
+    <input type="range" id="roomDepth" min="0.2" max="5.0" step="0.05" value="1.0">
+  </div>
+  <div class="row">
+    <label>奥の壁の縮小率 <span class="val" id="val-backScale">0.50</span></label>
+    <input type="range" id="backScale" min="0.1" max="1.0" step="0.01" value="0.5">
+  </div>
+
+  <button class="reset-btn" id="reset-defaults">デフォルトに戻す</button>
+</div>
+
+<!-- three.js と mediapipe tasks-vision を CDN から読み込む -->
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from "three";
+import { FaceDetector, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14";
+
+// ============================================================
+// ユーザー調整用パラメータ(Python版と対応)
+// ============================================================
+let SCREEN_WIDTH_M = 0.254;   // 25.4cm
+let SCREEN_HEIGHT_M = 0.170;  // 17.0cm
+
+// Webカメラの、ディスプレイに対するオフセット(m)。画面上端中央を想定。
+let CAMERA_OFFSET = new THREE.Vector3(0, SCREEN_HEIGHT_M / 2.0, 0);
+
+let REAL_FACE_WIDTH_M = 0.14;      // 平均的な顔の横幅(m)
+let ENABLE_DEPTH_TRACKING = false; // 顔の大きさから奥行きを推定するか
+let FIXED_DISTANCE_M = 0.5;        // ENABLE_DEPTH_TRACKING=false のときの固定距離(m)
+let CAMERA_HFOV_DEG = 60;          // Webカメラの水平視野角(概算)
+let SMOOTHING_ALPHA = 0.25;        // 位置スムージング係数
+
+const NEAR_CLIP = 0.01;
+const FAR_CLIP = 20.0;
+const GRID_STEP = 0.05;
+let ROOM_DEPTH = -1.0;
+let BACK_WIDTH_SCALE = 0.5;
+
+// デフォルト値(リセット用)
+const DEFAULTS = {
+  SCREEN_WIDTH_M: 0.254,
+  SCREEN_HEIGHT_M: 0.170,
+  REAL_FACE_WIDTH_M: 0.14,
+  ENABLE_DEPTH_TRACKING: false,
+  FIXED_DISTANCE_M: 0.5,
+  CAMERA_HFOV_DEG: 60,
+  SMOOTHING_ALPHA: 0.25,
+  ROOM_DEPTH: -1.0,
+  BACK_WIDTH_SCALE: 0.5,
+};
+
+// ============================================================
+// Three.js セットアップ
+// ============================================================
+const holder = document.getElementById("canvas-holder");
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(window.devicePixelRatio);
+renderer.setSize(window.innerWidth, window.innerHeight);
+holder.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(); // projectionMatrixは毎フレーム上書きする
+
+window.addEventListener("resize", () => {
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+function frange(start, stop, step) {
+  const vals = [];
+  for (let x = start; x <= stop + 1e-9; x += step) vals.push(x);
+  return vals;
+}
+const lerp = (a, b, t) => a + (b - a) * t;
+
+function buildRoomGrid() {
+  const group = new THREE.Group();
+  const hw = SCREEN_WIDTH_M / 2.0;
+  const hh = SCREEN_HEIGHT_M / 2.0;
+  const z1 = ROOM_DEPTH;
+  const backHw = hw * BACK_WIDTH_SCALE;
+
+  const xsFront = frange(-hw, hw, GRID_STEP);
+  const xsBack = xsFront.map(x => x * BACK_WIDTH_SCALE);
+  const ys = frange(-hh, hh, GRID_STEP);
+  const zs = frange(z1, 0.0, GRID_STEP);
+
+  const xBound = (t, sign) => lerp(sign * hw, sign * backHw, t);
+
+  function addLines(points, color) {
+    const geo = new THREE.BufferGeometry().setFromPoints(points);
+    const mat = new THREE.LineBasicMaterial({ color });
+    group.add(new THREE.LineSegments(geo, mat));
+  }
+
+  // 奥の壁
+  let pts = [];
+  for (const xb of xsBack) pts.push(new THREE.Vector3(xb, -hh, z1), new THREE.Vector3(xb, hh, z1));
+  for (const y of ys) pts.push(new THREE.Vector3(-backHw, y, z1), new THREE.Vector3(backHw, y, z1));
+  addLines(pts, 0x26bfff);
+
+  // 床
+  pts = [];
+  for (let i = 0; i < xsFront.length; i++) {
+    pts.push(new THREE.Vector3(xsFront[i], -hh, 0.0), new THREE.Vector3(xsBack[i], -hh, z1));
+  }
+  for (const z of zs) {
+    const t = z / z1;
+    pts.push(new THREE.Vector3(xBound(t, -1), -hh, z), new THREE.Vector3(xBound(t, 1), -hh, z));
+  }
+  addLines(pts, 0xff8c26);
+
+  // 天井
+  pts = [];
+  for (let i = 0; i < xsFront.length; i++) {
+    pts.push(new THREE.Vector3(xsFront[i], hh, 0.0), new THREE.Vector3(xsBack[i], hh, z1));
+  }
+  for (const z of zs) {
+    const t = z / z1;
+    pts.push(new THREE.Vector3(xBound(t, -1), hh, z), new THREE.Vector3(xBound(t, 1), hh, z));
+  }
+  addLines(pts, 0x9950ff);
+
+  // 左壁
+  pts = [];
+  for (const y of ys) pts.push(new THREE.Vector3(-hw, y, 0.0), new THREE.Vector3(-backHw, y, z1));
+  for (const z of zs) {
+    const t = z / z1;
+    const xb = xBound(t, -1);
+    pts.push(new THREE.Vector3(xb, -hh, z), new THREE.Vector3(xb, hh, z));
+  }
+  addLines(pts, 0x33ff66);
+
+  // 右壁
+  pts = [];
+  for (const y of ys) pts.push(new THREE.Vector3(hw, y, 0.0), new THREE.Vector3(backHw, y, z1));
+  for (const z of zs) {
+    const t = z / z1;
+    const xb = xBound(t, 1);
+    pts.push(new THREE.Vector3(xb, -hh, z), new THREE.Vector3(xb, hh, z));
+  }
+  addLines(pts, 0x33ff66);
+
+  // 画面フチ(開口部)を白く強調
+  const framePts = [
+    new THREE.Vector3(-hw, -hh, 0), new THREE.Vector3(hw, -hh, 0),
+    new THREE.Vector3(hw, -hh, 0), new THREE.Vector3(hw, hh, 0),
+    new THREE.Vector3(hw, hh, 0), new THREE.Vector3(-hw, hh, 0),
+    new THREE.Vector3(-hw, hh, 0), new THREE.Vector3(-hw, -hh, 0),
+  ];
+  const frameGeo = new THREE.BufferGeometry().setFromPoints(framePts);
+  const frameMat = new THREE.LineBasicMaterial({ color: 0xffffff, linewidth: 2 });
+  group.add(new THREE.LineSegments(frameGeo, frameMat));
+
+  return group;
+}
+
+let roomGridGroup = buildRoomGrid();
+scene.add(roomGridGroup);
+
+function rebuildRoomGrid() {
+  scene.remove(roomGridGroup);
+  roomGridGroup.traverse((obj) => {
+    if (obj.geometry) obj.geometry.dispose();
+    if (obj.material) obj.material.dispose();
+  });
+  roomGridGroup = buildRoomGrid();
+  scene.add(roomGridGroup);
+}
+
+// ============================================================
+// Kooima の Generalized Perspective Projection (off-axis frustum)
+// ============================================================
+function applyHeadCoupledView(eye) {
+  const hw = SCREEN_WIDTH_M / 2.0;
+  const hh = SCREEN_HEIGHT_M / 2.0;
+  const pa = new THREE.Vector3(-hw, -hh, 0);
+  const pb = new THREE.Vector3(hw, -hh, 0);
+  const pc = new THREE.Vector3(-hw, hh, 0);
+
+  const vr = pb.clone().sub(pa).normalize();
+  const vu = pc.clone().sub(pa).normalize();
+  const vn = new THREE.Vector3().crossVectors(vr, vu).normalize();
+
+  const va = pa.clone().sub(eye);
+  const vb = pb.clone().sub(eye);
+  const vc = pc.clone().sub(eye);
+
+  const d = Math.max(-va.dot(vn), 1e-4);
+  const nd = NEAR_CLIP / d;
+  const l = vr.dot(va) * nd;
+  const r = vr.dot(vb) * nd;
+  const b = vu.dot(va) * nd;
+  const t = vu.dot(vc) * nd;
+
+  camera.projectionMatrix.makePerspective(l, r, t, b, NEAR_CLIP, FAR_CLIP);
+  camera.projectionMatrixInverse.copy(camera.projectionMatrix).invert();
+
+  // vr, vu, vn を列とする回転行列 = カメラのワールド姿勢
+  const rotMat = new THREE.Matrix4().makeBasis(vr, vu, vn);
+  camera.quaternion.setFromRotationMatrix(rotMat);
+  camera.position.copy(eye);
+  camera.updateMatrixWorld(true);
+}
+
+// ============================================================
+// 頭部トラッカー(MediaPipe Tasks Vision + getUserMedia)
+// ============================================================
+const video = document.getElementById("debug-video");
+const statusEl = document.getElementById("status");
+
+let faceDetector = null;
+let focalPx = 0;
+let smoothed = new THREE.Vector3(0, 0, ENABLE_DEPTH_TRACKING ? 0.6 : FIXED_DISTANCE_M);
+let calibOffset = new THREE.Vector3(0, 0, 0);
+let lastBox = null;
+
+async function initTracker() {
+  statusEl.textContent = "カメラ起動中...";
+  statusEl.className = "warn";
+
+  const stream = await navigator.mediaDevices.getUserMedia({
+    video: { width: { ideal: 640 }, height: { ideal: 480 } },
+  });
+  video.srcObject = stream;
+  await video.play();
+  focalPx = (video.videoWidth / 2.0) / Math.tan((CAMERA_HFOV_DEG / 2.0) * Math.PI / 180);
+
+  statusEl.textContent = "顔検出モデル読み込み中...";
+  const vision = await FilesetResolver.forVisionTasks(
+    "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
+  );
+  faceDetector = await FaceDetector.createFromOptions(vision, {
+    baseOptions: {
+      modelAssetPath:
+        "https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite",
+    },
+    runningMode: "VIDEO",
+  });
+
+  statusEl.textContent = "トラッキング中";
+  statusEl.className = "ok";
+  detectLoop();
+}
+
+function detectLoop() {
+  if (faceDetector && video.videoWidth > 0) {
+    const result = faceDetector.detectForVideo(video, performance.now());
+    if (result.detections.length > 0) {
+      // 一番大きい(近い)顔を採用
+      let best = result.detections[0];
+      for (const det of result.detections) {
+        if (det.boundingBox.width > best.boundingBox.width) best = det;
+      }
+      const bb = best.boundingBox;
+      lastBox = bb;
+      updatePosition(bb);
+      statusEl.textContent = "トラッキング中";
+      statusEl.className = "ok";
+    } else {
+      lastBox = null;
+      statusEl.textContent = "顔が見つかりません";
+      statusEl.className = "warn";
+    }
+  }
+  requestAnimationFrame(detectLoop);
+}
+
+function updatePosition(bb) {
+  // videoは鏡像表示していないので、そのままのbbを使う(左右反転はワールド変換側で対応)
+  const cx = bb.originX + bb.width / 2.0;
+  const cy = bb.originY + bb.height / 2.0;
+  const vw = video.videoWidth;
+  const vh = video.videoHeight;
+
+  let z;
+  if (ENABLE_DEPTH_TRACKING) {
+    z = (REAL_FACE_WIDTH_M * focalPx) / Math.max(bb.width, 1e-6);
+  } else {
+    z = FIXED_DISTANCE_M;
+  }
+  // カメラ画像でのxは左右そのまま。鏡に映したように直感的にするため符号を反転。
+  const px = -((cx - vw / 2.0) * z / focalPx);
+  const py = -((cy - vh / 2.0) * z / focalPx); // 画像は下向き+yなので反転してワールドのy(上向き+)に
+
+  const world = new THREE.Vector3(px, py, z).add(CAMERA_OFFSET);
+  smoothed.lerp(world, SMOOTHING_ALPHA);
+}
+
+function getEyePosition() {
+  return smoothed.clone().sub(calibOffset);
+}
+
+function calibrateCenter() {
+  calibOffset.set(smoothed.x, smoothed.y, 0);
+}
+
+// ============================================================
+// メインループ / 操作
+// ============================================================
+function animate() {
+  requestAnimationFrame(animate);
+  applyHeadCoupledView(getEyePosition());
+  renderer.render(scene, camera);
+}
+
+window.addEventListener("keydown", (e) => {
+  if (e.key === "c" || e.key === "C") calibrateCenter();
+  if (e.key === "d" || e.key === "D") {
+    video.style.display = video.style.display === "block" ? "none" : "block";
+  }
+  if (e.key === "f" || e.key === "F") {
+    if (!document.fullscreenElement) document.documentElement.requestFullscreen();
+    else document.exitFullscreen();
+  }
+  if (e.key === "s" || e.key === "S") {
+    settingsPanel.style.display = settingsPanel.style.display === "block" ? "none" : "block";
+  }
+});
+
+// ============================================================
+// 設定パネル
+// ============================================================
+const settingsToggle = document.getElementById("settings-toggle");
+const settingsPanel = document.getElementById("settings-panel");
+settingsToggle.addEventListener("click", () => {
+  settingsPanel.style.display = settingsPanel.style.display === "block" ? "none" : "block";
+});
+
+const els = {
+  screenW: document.getElementById("screenW"),
+  screenH: document.getElementById("screenH"),
+  hfov: document.getElementById("hfov"),
+  depthTracking: document.getElementById("depthTracking"),
+  fixedDist: document.getElementById("fixedDist"),
+  faceWidth: document.getElementById("faceWidth"),
+  smoothing: document.getElementById("smoothing"),
+  roomDepth: document.getElementById("roomDepth"),
+  backScale: document.getElementById("backScale"),
+};
+const vals = {
+  screenW: document.getElementById("val-screenW"),
+  screenH: document.getElementById("val-screenH"),
+  hfov: document.getElementById("val-hfov"),
+  fixedDist: document.getElementById("val-fixedDist"),
+  faceWidth: document.getElementById("val-faceWidth"),
+  smoothing: document.getElementById("val-smoothing"),
+  roomDepth: document.getElementById("val-roomDepth"),
+  backScale: document.getElementById("val-backScale"),
+};
+
+function refreshFocalPx() {
+  if (video.videoWidth > 0) {
+    focalPx = (video.videoWidth / 2.0) / Math.tan((CAMERA_HFOV_DEG / 2.0) * Math.PI / 180);
+  }
+}
+
+els.screenW.addEventListener("input", () => {
+  SCREEN_WIDTH_M = parseFloat(els.screenW.value) / 100;
+  vals.screenW.textContent = els.screenW.value;
+  rebuildRoomGrid();
+});
+els.screenH.addEventListener("input", () => {
+  SCREEN_HEIGHT_M = parseFloat(els.screenH.value) / 100;
+  vals.screenH.textContent = els.screenH.value;
+  CAMERA_OFFSET = new THREE.Vector3(0, SCREEN_HEIGHT_M / 2.0, 0);
+  rebuildRoomGrid();
+});
+els.hfov.addEventListener("input", () => {
+  CAMERA_HFOV_DEG = parseFloat(els.hfov.value);
+  vals.hfov.textContent = els.hfov.value;
+  refreshFocalPx();
+});
+els.depthTracking.addEventListener("change", () => {
+  ENABLE_DEPTH_TRACKING = els.depthTracking.checked;
+  els.fixedDist.disabled = ENABLE_DEPTH_TRACKING;
+  els.faceWidth.disabled = !ENABLE_DEPTH_TRACKING;
+});
+els.fixedDist.addEventListener("input", () => {
+  FIXED_DISTANCE_M = parseFloat(els.fixedDist.value);
+  vals.fixedDist.textContent = FIXED_DISTANCE_M.toFixed(2);
+});
+els.faceWidth.addEventListener("input", () => {
+  REAL_FACE_WIDTH_M = parseFloat(els.faceWidth.value) / 100;
+  vals.faceWidth.textContent = els.faceWidth.value;
+});
+els.smoothing.addEventListener("input", () => {
+  SMOOTHING_ALPHA = parseFloat(els.smoothing.value);
+  vals.smoothing.textContent = SMOOTHING_ALPHA.toFixed(2);
+});
+els.roomDepth.addEventListener("input", () => {
+  ROOM_DEPTH = -parseFloat(els.roomDepth.value);
+  vals.roomDepth.textContent = parseFloat(els.roomDepth.value).toFixed(2);
+  rebuildRoomGrid();
+});
+els.backScale.addEventListener("input", () => {
+  BACK_WIDTH_SCALE = parseFloat(els.backScale.value);
+  vals.backScale.textContent = BACK_WIDTH_SCALE.toFixed(2);
+  rebuildRoomGrid();
+});
+
+document.getElementById("reset-defaults").addEventListener("click", () => {
+  SCREEN_WIDTH_M = DEFAULTS.SCREEN_WIDTH_M;
+  SCREEN_HEIGHT_M = DEFAULTS.SCREEN_HEIGHT_M;
+  CAMERA_OFFSET = new THREE.Vector3(0, SCREEN_HEIGHT_M / 2.0, 0);
+  REAL_FACE_WIDTH_M = DEFAULTS.REAL_FACE_WIDTH_M;
+  ENABLE_DEPTH_TRACKING = DEFAULTS.ENABLE_DEPTH_TRACKING;
+  FIXED_DISTANCE_M = DEFAULTS.FIXED_DISTANCE_M;
+  CAMERA_HFOV_DEG = DEFAULTS.CAMERA_HFOV_DEG;
+  SMOOTHING_ALPHA = DEFAULTS.SMOOTHING_ALPHA;
+  ROOM_DEPTH = DEFAULTS.ROOM_DEPTH;
+  BACK_WIDTH_SCALE = DEFAULTS.BACK_WIDTH_SCALE;
+
+  els.screenW.value = (SCREEN_WIDTH_M * 100).toFixed(1);
+  els.screenH.value = (SCREEN_HEIGHT_M * 100).toFixed(1);
+  els.hfov.value = CAMERA_HFOV_DEG;
+  els.depthTracking.checked = ENABLE_DEPTH_TRACKING;
+  els.fixedDist.value = FIXED_DISTANCE_M;
+  els.fixedDist.disabled = ENABLE_DEPTH_TRACKING;
+  els.faceWidth.value = (REAL_FACE_WIDTH_M * 100).toFixed(1);
+  els.faceWidth.disabled = !ENABLE_DEPTH_TRACKING;
+  els.smoothing.value = SMOOTHING_ALPHA;
+  els.roomDepth.value = (-ROOM_DEPTH).toFixed(2);
+  els.backScale.value = BACK_WIDTH_SCALE;
+
+  vals.screenW.textContent = els.screenW.value;
+  vals.screenH.textContent = els.screenH.value;
+  vals.hfov.textContent = els.hfov.value;
+  vals.fixedDist.textContent = FIXED_DISTANCE_M.toFixed(2);
+  vals.faceWidth.textContent = els.faceWidth.value;
+  vals.smoothing.textContent = SMOOTHING_ALPHA.toFixed(2);
+  vals.roomDepth.textContent = (-ROOM_DEPTH).toFixed(2);
+  vals.backScale.textContent = BACK_WIDTH_SCALE.toFixed(2);
+
+  refreshFocalPx();
+  rebuildRoomGrid();
+});
+
+// 初期状態の有効/無効を反映
+els.fixedDist.disabled = ENABLE_DEPTH_TRACKING;
+els.faceWidth.disabled = !ENABLE_DEPTH_TRACKING;
+
+document.getElementById("start-btn").addEventListener("click", async () => {
+  document.getElementById("start-overlay").style.display = "none";
+  try {
+    await initTracker();
+    animate();
+  } catch (err) {
+    statusEl.textContent = "エラー: " + err.message;
+    statusEl.className = "err";
+    console.error(err);
+  }
+});
+</script>
+</body>
+</html>
